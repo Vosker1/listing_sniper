@@ -1,0 +1,241 @@
+# ============================================================
+# FUNDING BOT - DROPLET & GITHUB COMMANDS
+# ============================================================
+
+# harde reset:
+# git reset --hard origin/main
+# git pull
+
+# screen -S hedge_funding # nieuwe screen sessie
+# screen  Ctrl+A dan D om te detachen.
+# screen -r hedge_funding  # terug naar sessie
+
+
+# venv opstarten:
+# cd /root/funding2
+# source venv/bin/activate
+
+droplet_info:
+  ip: "159.223.87.96"
+  user: "root"
+  locatie: "Singapore (SGP1)"
+  bot_folder: "/root/Funding_bot"
+  latency: "~20-30ms naar Bybit"
+
+# ============================================================
+# VS CODE SSH VERBINDING
+# ============================================================
+
+vscode_ssh:
+  
+  eerste_keer_setup:
+    stap_1: "Install extensie 'Remote - SSH' in VS Code"
+    stap_2: "F1 → 'Remote-SSH: Add New SSH Host'"
+    stap_3: "Typ: ssh root@159.223.87.96"
+    stap_4: "Kies: C:\\Users\\Admin\\.ssh\\config"
+    stap_5: "F1 → 'Remote-SSH: Connect to Host' → kies je droplet"
+    stap_6: "Kies 'Linux' → voer wachtwoord in"
+  
+  opnieuw_connecten:
+    actie: "F1 → 'Remote-SSH: Connect to Host' → 159.223.87.96"
+
+# ============================================================
+# DROPLET CONSOLE (Digital Ocean Dashboard)
+# ============================================================
+
+droplet_console:
+  
+  ssh_verbinden:
+    command: "ssh root@159.223.87.96"
+    info: "Voer daarna wachtwoord in"
+  
+  naar_bot_folder:
+    command: "cd /root/Funding_bot"
+
+# ============================================================
+# GITHUB SYNC COMMANDS
+# ============================================================
+
+github:
+  
+  pull_laatste_versie:
+    command: "git pull"
+    info: "Haalt laatste code op van GitHub"
+    full: "cd /root/Funding_bot && git pull"
+  
+  conflict_logs_oplossen:
+    command: "git checkout -- logs/"
+    info: "Gooit lokale log wijzigingen weg"
+    daarna: "git pull"
+  
+  alles_resetten:
+    command: "git reset --hard origin/main"
+    warning: "LET OP: verliest ALLE lokale wijzigingen!"
+  
+  push_naar_github:
+    stap_1: "git add ."
+    stap_2: "git commit -m 'beschrijving'"
+    stap_3: "git push"
+    info: "Voer GitHub username + Personal Access Token in"
+  
+  push_rejected_fix:
+    command_1: "git pull --rebase"
+    command_2: "git push"
+
+# ============================================================
+# BOT STARTEN & STOPPEN
+# ============================================================
+
+bot_control:
+  
+  test_mode:
+    command: "python3 main.py test"
+    info: "Draait 1 test cycle op volgende minuut"
+  
+  normale_mode:
+    command: "python3 main.py"
+    info: "Draait continu, wacht op funding events"
+  
+  stoppen:
+    command: "Ctrl+C"
+    info: "In terminal waar bot draait"
+
+# ============================================================
+# SCREEN - BOT BLIJFT DRAAIEN NA LOGOUT
+# ============================================================
+
+screen:
+  
+  nieuwe_sessie:
+    command: "screen -S bot"
+    info: "Start nieuwe screen sessie genaamd 'bot'"
+  
+  bot_starten_in_screen:
+    stap_1: "screen -S bot"
+    stap_2: "cd /root/Funding_bot"
+    stap_3: "python3 main.py"
+  
+  loskoppelen:
+    command: "Ctrl+A, dan D"
+    info: "Bot blijft draaien, jij kunt uitloggen"
+  
+  terug_naar_sessie:
+    command: "screen -r bot"
+    info: "Herverbind met draaiende bot"
+  
+  alle_sessies_bekijken:
+    command: "screen -ls"
+  
+  sessie_killen:
+    command: "screen -X -S bot quit"
+
+# ============================================================
+# ENV & CONFIG BEWERKEN
+# ============================================================
+
+config_files:
+  
+  env_bewerken:
+    command: "nano /root/Funding_bot/input.env"
+    inhoud: |
+      BYBIT_API_KEY=jouw_api_key
+      BYBIT_API_SECRET=jouw_api_secret
+    opslaan: "Ctrl+X → Y → Enter"
+  
+  config_bewerken:
+    command: "nano /root/Funding_bot/config.yaml"
+    opslaan: "Ctrl+X → Y → Enter"
+
+# ============================================================
+# DEPENDENCIES & INSTALLATIE
+# ============================================================
+
+installatie:
+  
+  pip_packages:
+    command: "pip install -r requirements.txt --break-system-packages"
+    info: "Eenmalig na eerste clone of bij nieuwe dependencies"
+
+# ============================================================
+# LATENCY TESTEN
+# ============================================================
+
+latency_test:
+  
+  quick_ping_test:
+    info: "Test verbindingssnelheid naar Bybit"
+    command: |
+      python3 -c "
+      import urllib.request
+      import time
+      times = []
+      for i in range(10):
+          start = time.time()
+          urllib.request.urlopen('https://api.bybit.com/v5/market/time')
+          ms = (time.time()-start)*1000
+          times.append(ms)
+          print(f'Ping {i+1}: {ms:.1f}ms')
+      print(f'\nGem: {sum(times)/len(times):.1f}ms')
+      "
+    verwacht: "~20-30ms op droplet, ~250ms op PC thuis"
+
+# ============================================================
+# LOGS BEKIJKEN
+# ============================================================
+
+logs:
+  
+  laatste_regels:
+    command: "tail -50 /root/Funding_bot/logs/trades_session.csv"
+    info: "Toont laatste 50 regels"
+  
+  live_volgen:
+    command: "tail -f /root/Funding_bot/logs/trades_session.csv"
+    info: "Volgt log in realtime, Ctrl+C om te stoppen"
+
+# ============================================================
+# SYSTEEM MONITORING
+# ============================================================
+
+systeem:
+  
+  geheugen:
+    command: "free -h"
+  
+  processen:
+    command: "htop"
+    alternatief: "top"
+  
+  disk_ruimte:
+    command: "df -h"
+  
+  python_processen:
+    command: "ps aux | grep python"
+  
+  droplet_herstarten:
+    command: "sudo reboot"
+    info: "Wacht 1-2 min, dan opnieuw SSH"
+
+# ============================================================
+# TYPISCHE WORKFLOWS
+# ============================================================
+
+workflows:
+  
+  dagelijkse_deploy:
+    beschrijving: "Na wijzigingen lokaal, deployen naar droplet"
+    stap_1: "Lokaal in VS Code wijzigingen maken"
+    stap_2: "git add . && git commit -m 'update' && git push"
+    stap_3: "Op droplet: cd /root/Funding_bot && git pull"
+    stap_4: "python3 main.py test (of main.py voor productie)"
+  
+  quick_deploy:
+    command: "cd /root/Funding_bot && git pull && python3 main.py"
+    info: "Alles in één command"
+  
+  bot_24_7_draaien:
+    stap_1: "screen -S bot"
+    stap_2: "cd /root/Funding_bot && git pull && python3 main.py"
+    stap_3: "Ctrl+A, D (detach)"
+    stap_4: "Logout - bot blijft draaien"
+    later_checken: "screen -r bot"
