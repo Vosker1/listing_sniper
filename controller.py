@@ -6,10 +6,12 @@ Commands:
     /start   - Start sniper bot
     /stop    - Stop sniper bot
     /status  - Bot status + posities
-    /pnl     - P&L overzicht
+    /pnl     - Live P&L met huidige prijs
     /balance - Wallet balance
     /logs    - Laatste logs
     /config  - Toon config
+    /test    - Test buy AVAXUSDT ($5)
+    /sell    - Verkoop open posities
     /info    - Commands lijst
 """
 
@@ -20,6 +22,7 @@ import signal
 import subprocess
 import threading
 import json
+import math
 from pathlib import Path
 from datetime import datetime
 
@@ -40,6 +43,11 @@ except:
     def load_dotenv(*args, **kwargs):
         return False
 
+try:
+    import yaml
+except:
+    yaml = None
+
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -58,6 +66,10 @@ _running = True
 _trading_process = None
 _process_lock = threading.Lock()
 _client = None
+_config = None
+
+# Test position tracking (voor /test en /sell)
+_test_position = None  # {symbol, qty, entry_price, entry_time, trailing_set}
 
 LOG_FILE = "data/logs/sniper.log"
 TRADES_FILE = "data/trades.json"
@@ -70,7 +82,7 @@ def _log(msg: str):
 
 def setup(env_path: str = "input.env") -> bool:
     """Load credentials"""
-    global _BOT_TOKEN, _CHAT_ID, _client
+    global _BOT_TOKEN, _CHAT_ID, _client, _config
     
     p = Path(env_path)
     if p.exists():
@@ -89,6 +101,12 @@ def setup(env_path: str = "input.env") -> bool:
     if api_key and api_secret:
         _client = BybitClient(api_key, api_secret)
         _log("Bybit client initialized")
+    
+    # Load config
+    if yaml and Path('config.yaml').exists():
+        with open('config.yaml', 'r') as f:
+            _config = yaml.safe_load(f)
+        _log("Config loaded")
     
     return True
 
@@ -192,31 +210,99 @@ Bot: {running}
 
 
 def cmd_pnl() -> str:
+    """Show live P&L - check Bybit for actual positions"""
+    if not _client:
+        return "❌ Client niet beschikbaar"
+    
     try:
-        if Path(TRADES_FILE).exists():
-            with open(TRADES_FILE, 'r') as f:
-                trades = json.load(f)
-            
-            if not trades:
-                return "Geen trades gevonden"
-            
-            total_net = sum(t.get('net_pnl', 0) for t in trades)
-            total_gross = sum(t.get('gross_pnl', 0) for t in trades)
-            total_fees = sum(t.get('fees', 0) for t in trades)
-            winners = len([t for t in trades if t.get('net_pnl', 0) > 0])
-            
-            return f"""<b>📈 P&L Summary</b>
+        # Get actual positions from Bybit
+        resp = _client.get_positions()
+        if resp.get('retCode') != 0:
+            return f"❌ Positions error: {resp.get('retMsg')}"
+        
+        positions = resp.get('result', {}).get('list', [])
+        active = [p for p in positions if float(p.get('size', 0)) > 0]
+        
+        if not active:
+            # No open positions - show historical
+            if Path(TRADES_FILE).exists():
+                with open(TRADES_FILE, 'r') as f:
+                    trades = json.load(f)
+                
+                if trades:
+                    total_net = sum(t.get('net_pnl', 0) for t in trades)
+                    winners = len([t for t in trades if t.get('net_pnl', 0) > 0])
+                    return f"""<b>📈 P&L Summary</b>
 
+Geen open posities
+
+<b>Historisch:</b>
 Trades: {len(trades)}
 Winners: {winners} ({winners/len(trades)*100:.0f}%)
-
-Gross: ${total_gross:.2f}
-Fees: ${total_fees:.4f}
-<b>Net: ${total_net:.2f}</b>
-"""
-        return "Geen trades gevonden"
+Net P&L: ${total_net:.2f}"""
+            
+            return "📊 Geen open posities en geen historische trades"
+        
+        # Show live positions
+        lines = ["<b>📈 Live P&L</b>\n"]
+        
+        total_unrealized = 0
+        
+        for pos in active:
+            symbol = pos.get('symbol', '')
+            side = pos.get('side', '')
+            size = float(pos.get('size', 0))
+            entry_price = float(pos.get('avgPrice', 0))
+            mark_price = float(pos.get('markPrice', 0))
+            unrealized_pnl = float(pos.get('unrealisedPnl', 0))
+            position_value = float(pos.get('positionValue', 0))
+            trailing_stop = pos.get('trailingStop', '0')
+            created_time = int(pos.get('createdTime', 0))
+            
+            # Calculate %
+            if position_value > 0:
+                pnl_pct = (unrealized_pnl / position_value) * 100
+            else:
+                pnl_pct = 0
+            
+            # Duration
+            if created_time > 0:
+                duration_sec = (time.time() * 1000 - created_time) / 1000
+                if duration_sec > 3600:
+                    duration_str = f"{duration_sec/3600:.1f}h"
+                elif duration_sec > 60:
+                    duration_str = f"{duration_sec/60:.0f}m"
+                else:
+                    duration_str = f"{duration_sec:.0f}s"
+            else:
+                duration_str = "?"
+            
+            # Trailing status
+            trailing_active = float(trailing_stop) > 0
+            trailing_str = f"✅ {trailing_stop}" if trailing_active else "❌"
+            
+            # PnL emoji
+            pnl_emoji = "🟢" if unrealized_pnl >= 0 else "🔴"
+            
+            total_unrealized += unrealized_pnl
+            
+            lines.append(f"""<b>{symbol}</b> {side.upper()}
+   Qty: {size}
+   Entry: ${entry_price:.6f}
+   Current: ${mark_price:.6f}
+   {pnl_emoji} P&L: ${unrealized_pnl:.2f} ({pnl_pct:+.2f}%)
+   Trailing: {trailing_str}
+   Duration: {duration_str}
+""")
+        
+        # Total
+        total_emoji = "🟢" if total_unrealized >= 0 else "🔴"
+        lines.append(f"<b>{total_emoji} Total Unrealized: ${total_unrealized:.2f}</b>")
+        
+        return "\n".join(lines)
+        
     except Exception as e:
-        return f"Error: {e}"
+        return f"❌ Error: {e}"
 
 
 def cmd_balance() -> str:
@@ -275,6 +361,288 @@ def cmd_config() -> str:
         return f"Error: {e}"
 
 
+def cmd_test(args: str) -> str:
+    """Test buy AVAXUSDT for ~$5 with trailing stop"""
+    global _test_position
+    
+    if not _client:
+        return "❌ Client niet beschikbaar"
+    
+    symbol = "AVAXUSDT"
+    budget = 5.0
+    
+    try:
+        # Get instrument info
+        inst_resp = _client.get_instruments_info(category='linear')
+        if inst_resp.get('retCode') != 0:
+            return f"❌ Instruments error: {inst_resp.get('retMsg')}"
+        
+        instrument = None
+        for i in inst_resp.get('result', {}).get('list', []):
+            if i.get('symbol') == symbol:
+                instrument = i
+                break
+        
+        if not instrument:
+            return f"❌ {symbol} niet gevonden"
+        
+        # Get qty step and min qty
+        qty_step = float(instrument.get('lotSizeFilter', {}).get('qtyStep', '0.1'))
+        min_qty = float(instrument.get('lotSizeFilter', {}).get('minOrderQty', '0.1'))
+        min_notional = float(instrument.get('lotSizeFilter', {}).get('minNotionalValue', '5'))
+        tick_size = instrument.get('priceFilter', {}).get('tickSize', '0.01')
+        
+        # Get current price
+        ticker_resp = _client.get_tickers(category='linear', symbol=symbol)
+        if ticker_resp.get('retCode') != 0:
+            return f"❌ Ticker error: {ticker_resp.get('retMsg')}"
+        
+        ticker = ticker_resp.get('result', {}).get('list', [{}])[0]
+        ask_price = float(ticker.get('ask1Price', 0))
+        
+        if ask_price <= 0:
+            return "❌ Geen ask price beschikbaar"
+        
+        # Calculate qty (round UP to meet minimum)
+        raw_qty = budget / ask_price
+        
+        # Round up to qty_step
+        qty = math.ceil(raw_qty / qty_step) * qty_step
+        
+        # Ensure minimum
+        if qty < min_qty:
+            qty = min_qty
+        
+        # Check notional
+        notional = qty * ask_price
+        if notional < min_notional:
+            qty = math.ceil(min_notional / ask_price / qty_step) * qty_step
+            notional = qty * ask_price
+        
+        # Format qty
+        if qty_step >= 1:
+            qty_str = str(int(qty))
+        else:
+            decimals = len(str(qty_step).split('.')[-1]) if '.' in str(qty_step) else 0
+            qty_str = f"{qty:.{decimals}f}"
+        
+        # Add slippage to price (0.1%)
+        limit_price = ask_price * 1.001
+        price_decimals = len(tick_size.split('.')[1]) if '.' in tick_size else 2
+        limit_price_str = f"{limit_price:.{price_decimals}f}"
+        
+        _log(f"TEST BUY: {symbol} qty={qty_str} @ {limit_price_str} (ask={ask_price})")
+        
+        # Place IOC order
+        order_link_id = f"TEST_{int(time.time()*1000)}"
+        
+        resp = _client.place_order(
+            symbol=symbol,
+            side='Buy',
+            qty=qty_str,
+            order_type='Limit',
+            price=limit_price_str,
+            time_in_force='IOC',
+            order_link_id=order_link_id
+        )
+        
+        if resp.get('retCode') != 0:
+            return f"❌ Order failed: {resp.get('retMsg')}"
+        
+        order_id = resp.get('result', {}).get('orderId', '')
+        
+        # Wait briefly for fill
+        time.sleep(0.5)
+        
+        # Check order status
+        history_resp = _client.get_order_history(symbol=symbol, limit=10)
+        filled_qty = 0
+        avg_price = 0
+        
+        if history_resp.get('retCode') == 0:
+            for order in history_resp.get('result', {}).get('list', []):
+                if order.get('orderLinkId') == order_link_id:
+                    filled_qty = float(order.get('cumExecQty', 0))
+                    avg_price = float(order.get('avgPrice', 0))
+                    break
+        
+        if filled_qty <= 0:
+            return f"❌ Geen fill ontvangen (order: {order_id})"
+        
+        filled_value = filled_qty * avg_price
+        
+        # Set trailing stop
+        trailing_pct = _config.get('trailing', {}).get('distance_pct', 4.0) if _config else 4.0
+        trailing_value = str(round(avg_price * trailing_pct / 100, 6))
+        
+        trailing_resp = _client.set_trading_stop(
+            symbol=symbol,
+            trailing_stop=trailing_value
+        )
+        
+        trailing_ok = trailing_resp.get('retCode') == 0
+        
+        # Save test position
+        _test_position = {
+            'symbol': symbol,
+            'qty': filled_qty,
+            'entry_price': avg_price,
+            'entry_time': time.time(),
+            'trailing_set': trailing_ok
+        }
+        
+        _log(f"TEST BUY SUCCESS: {filled_qty} @ ${avg_price:.4f} = ${filled_value:.2f}")
+        
+        return f"""✅ <b>TEST BUY SUCCES</b>
+
+<b>{symbol}</b>
+Qty: {filled_qty}
+Entry: ${avg_price:.4f}
+Value: ${filled_value:.2f}
+
+Trailing Stop: {"✅ " + trailing_pct.__str__() + "%" if trailing_ok else "❌ Failed"}
+
+<i>Gebruik /pnl voor live P&L
+Gebruik /sell om te verkopen</i>"""
+
+    except Exception as e:
+        _log(f"TEST ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return f"❌ Error: {e}"
+
+
+def cmd_sell(args: str) -> str:
+    """Sell open positions"""
+    global _test_position
+    
+    if not _client:
+        return "❌ Client niet beschikbaar"
+    
+    try:
+        # Get actual positions from Bybit
+        resp = _client.get_positions()
+        if resp.get('retCode') != 0:
+            return f"❌ Positions error: {resp.get('retMsg')}"
+        
+        positions = resp.get('result', {}).get('list', [])
+        active = [p for p in positions if float(p.get('size', 0)) > 0]
+        
+        if not active:
+            _test_position = None
+            return "📊 Geen open posities om te verkopen"
+        
+        # If no args, show positions
+        if not args.strip():
+            lines = ["<b>📤 Open Posities</b>\n"]
+            for i, pos in enumerate(active, 1):
+                symbol = pos.get('symbol', '')
+                side = pos.get('side', '')
+                size = float(pos.get('size', 0))
+                entry = float(pos.get('avgPrice', 0))
+                unrealized = float(pos.get('unrealisedPnl', 0))
+                
+                lines.append(f"{i}. <b>{symbol}</b> {side}")
+                lines.append(f"   Size: {size} @ ${entry:.4f}")
+                lines.append(f"   P&L: ${unrealized:.2f}")
+            
+            lines.append("\n<i>Gebruik: /sell 1 of /sell AVAXUSDT of /sell all</i>")
+            return "\n".join(lines)
+        
+        # Process sell command
+        selection = args.strip().lower()
+        
+        symbols_to_sell = []
+        
+        if selection == 'all':
+            symbols_to_sell = [(p.get('symbol'), p.get('side'), float(p.get('size', 0))) for p in active]
+        elif selection.isdigit():
+            idx = int(selection) - 1
+            if 0 <= idx < len(active):
+                p = active[idx]
+                symbols_to_sell = [(p.get('symbol'), p.get('side'), float(p.get('size', 0)))]
+            else:
+                return "❌ Ongeldig nummer"
+        else:
+            symbol = selection.upper()
+            if not symbol.endswith('USDT'):
+                symbol += 'USDT'
+            
+            for p in active:
+                if p.get('symbol') == symbol:
+                    symbols_to_sell = [(symbol, p.get('side'), float(p.get('size', 0)))]
+                    break
+            
+            if not symbols_to_sell:
+                return f"❌ {symbol} niet gevonden in open posities"
+        
+        # Execute sells
+        results = []
+        for symbol, side, size in symbols_to_sell:
+            # Determine close side
+            close_side = 'Sell' if side == 'Buy' else 'Buy'
+            
+            # Get instrument for qty formatting
+            inst_resp = _client.get_instruments_info(category='linear')
+            qty_step = 0.1
+            for i in inst_resp.get('result', {}).get('list', []):
+                if i.get('symbol') == symbol:
+                    qty_step = float(i.get('lotSizeFilter', {}).get('qtyStep', '0.1'))
+                    break
+            
+            # Format qty
+            if qty_step >= 1:
+                qty_str = str(int(size))
+            else:
+                decimals = len(str(qty_step).split('.')[-1]) if '.' in str(qty_step) else 1
+                qty_str = f"{size:.{decimals}f}"
+            
+            _log(f"SELLING: {symbol} {close_side} {qty_str}")
+            
+            # Market sell with reduce_only
+            sell_resp = _client.place_order(
+                symbol=symbol,
+                side=close_side,
+                qty=qty_str,
+                order_type='Market',
+                time_in_force='IOC',
+                reduce_only=True
+            )
+            
+            if sell_resp.get('retCode') == 0:
+                order_id = sell_resp.get('result', {}).get('orderId', '')
+                
+                # Wait for fill
+                time.sleep(0.5)
+                
+                # Get fill info
+                exec_resp = _client.get_executions(symbol=symbol, limit=5)
+                fill_price = 0
+                
+                if exec_resp.get('retCode') == 0:
+                    for ex in exec_resp.get('result', {}).get('list', []):
+                        if ex.get('orderId') == order_id:
+                            fill_price = float(ex.get('execPrice', 0))
+                            break
+                
+                results.append(f"✅ {symbol}: Sold {qty_str} @ ${fill_price:.4f}")
+                
+                # Clear test position if it matches
+                if _test_position and _test_position.get('symbol') == symbol:
+                    entry = _test_position.get('entry_price', 0)
+                    pnl = (fill_price - entry) * size
+                    results.append(f"   P&L: ${pnl:.2f}")
+                    _test_position = None
+            else:
+                results.append(f"❌ {symbol}: {sell_resp.get('retMsg')}")
+        
+        return "<b>📤 Verkoop Resultaat</b>\n\n" + "\n".join(results)
+        
+    except Exception as e:
+        _log(f"SELL ERROR: {e}")
+        return f"❌ Error: {e}"
+
+
 def cmd_info() -> str:
     return """<b>📋 Listing Sniper Controller</b>
 
@@ -282,9 +650,13 @@ def cmd_info() -> str:
 /start - Start bot
 /stop - Stop bot
 
+<b>Testing:</b>
+/test - Test buy AVAXUSDT ($5)
+/sell - Verkoop open posities
+
 <b>Info:</b>
 /status - Bot status + posities
-/pnl - P&amp;L overzicht
+/pnl - Live P&amp;L overzicht
 /balance - Wallet balance
 /logs - Laatste logs
 /config - Toon config
@@ -300,6 +672,8 @@ COMMANDS = {
     '/balance': lambda args: cmd_balance(),
     '/logs': lambda args: cmd_logs(),
     '/config': lambda args: cmd_config(),
+    '/test': lambda args: cmd_test(args),
+    '/sell': lambda args: cmd_sell(args),
     '/info': lambda args: cmd_info(),
     '/help': lambda args: cmd_info(),
 }
