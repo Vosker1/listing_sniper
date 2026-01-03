@@ -451,23 +451,33 @@ def cmd_test(args: str) -> str:
         
         order_id = resp.get('result', {}).get('orderId', '')
         
-        # Wait briefly for fill
-        time.sleep(0.5)
+        # Wait for fill to process
+        time.sleep(1.0)
         
-        # Check order status
-        history_resp = _client.get_order_history(symbol=symbol, limit=10)
+        # Check position directly (more reliable than order history)
+        pos_resp = _client.get_positions(symbol=symbol)
         filled_qty = 0
         avg_price = 0
         
-        if history_resp.get('retCode') == 0:
-            for order in history_resp.get('result', {}).get('list', []):
-                if order.get('orderLinkId') == order_link_id:
-                    filled_qty = float(order.get('cumExecQty', 0))
-                    avg_price = float(order.get('avgPrice', 0))
+        if pos_resp.get('retCode') == 0:
+            for pos in pos_resp.get('result', {}).get('list', []):
+                if pos.get('symbol') == symbol and float(pos.get('size', 0)) > 0:
+                    filled_qty = float(pos.get('size', 0))
+                    avg_price = float(pos.get('avgPrice', 0))
                     break
         
         if filled_qty <= 0:
-            return f"❌ Geen fill ontvangen (order: {order_id})"
+            # Fallback: check order history
+            history_resp = _client.get_order_history(symbol=symbol, limit=10)
+            if history_resp.get('retCode') == 0:
+                for order in history_resp.get('result', {}).get('list', []):
+                    if order.get('orderLinkId') == order_link_id:
+                        filled_qty = float(order.get('cumExecQty', 0))
+                        avg_price = float(order.get('avgPrice', 0))
+                        break
+        
+        if filled_qty <= 0:
+            return f"❌ Geen fill ontvangen (order: {order_id})\n\nCheck /status of /pnl voor positie status"
         
         filled_value = filled_qty * avg_price
         
@@ -500,7 +510,7 @@ Qty: {filled_qty}
 Entry: ${avg_price:.4f}
 Value: ${filled_value:.2f}
 
-Trailing Stop: {"✅ " + trailing_pct.__str__() + "%" if trailing_ok else "❌ Failed"}
+Trailing Stop: {"✅ " + str(trailing_pct) + "%" if trailing_ok else "❌ Failed"}
 
 <i>Gebruik /pnl voor live P&L
 Gebruik /sell om te verkopen</i>"""
@@ -643,6 +653,88 @@ def cmd_sell(args: str) -> str:
         return f"❌ Error: {e}"
 
 
+def cmd_trailing(args: str) -> str:
+    """Set trailing stop on open position"""
+    if not _client:
+        return "❌ Client niet beschikbaar"
+    
+    try:
+        # Get positions
+        resp = _client.get_positions()
+        if resp.get('retCode') != 0:
+            return f"❌ Positions error: {resp.get('retMsg')}"
+        
+        positions = resp.get('result', {}).get('list', [])
+        active = [p for p in positions if float(p.get('size', 0)) > 0]
+        
+        if not active:
+            return "📊 Geen open posities"
+        
+        # If no args, show positions with trailing status
+        if not args.strip():
+            lines = ["<b>🎯 Trailing Stop Status</b>\n"]
+            for i, pos in enumerate(active, 1):
+                symbol = pos.get('symbol', '')
+                trailing = pos.get('trailingStop', '0')
+                trailing_active = float(trailing) > 0
+                entry = float(pos.get('avgPrice', 0))
+                
+                status = f"✅ {trailing}" if trailing_active else "❌ Niet actief"
+                lines.append(f"{i}. <b>{symbol}</b>")
+                lines.append(f"   Entry: ${entry:.4f}")
+                lines.append(f"   Trailing: {status}")
+            
+            lines.append("\n<i>Gebruik: /trailing 1 of /trailing AVAXUSDT</i>")
+            return "\n".join(lines)
+        
+        # Find position to set trailing
+        selection = args.strip().lower()
+        target_pos = None
+        
+        if selection.isdigit():
+            idx = int(selection) - 1
+            if 0 <= idx < len(active):
+                target_pos = active[idx]
+        else:
+            symbol = selection.upper()
+            if not symbol.endswith('USDT'):
+                symbol += 'USDT'
+            for p in active:
+                if p.get('symbol') == symbol:
+                    target_pos = p
+                    break
+        
+        if not target_pos:
+            return "❌ Positie niet gevonden"
+        
+        symbol = target_pos.get('symbol')
+        entry_price = float(target_pos.get('avgPrice', 0))
+        
+        # Calculate trailing stop
+        trailing_pct = _config.get('trailing', {}).get('distance_pct', 4.0) if _config else 4.0
+        trailing_value = str(round(entry_price * trailing_pct / 100, 6))
+        
+        _log(f"Setting trailing stop on {symbol}: {trailing_pct}% = {trailing_value}")
+        
+        trailing_resp = _client.set_trading_stop(
+            symbol=symbol,
+            trailing_stop=trailing_value
+        )
+        
+        if trailing_resp.get('retCode') == 0:
+            return f"""✅ <b>Trailing Stop Gezet</b>
+
+<b>{symbol}</b>
+Entry: ${entry_price:.4f}
+Trailing: {trailing_pct}% = ${float(trailing_value):.4f}"""
+        else:
+            return f"❌ Trailing stop failed: {trailing_resp.get('retMsg')}"
+        
+    except Exception as e:
+        _log(f"TRAILING ERROR: {e}")
+        return f"❌ Error: {e}"
+
+
 def cmd_info() -> str:
     return """<b>📋 Listing Sniper Controller</b>
 
@@ -653,6 +745,7 @@ def cmd_info() -> str:
 <b>Testing:</b>
 /test - Test buy AVAXUSDT ($5)
 /sell - Verkoop open posities
+/trailing - Zet trailing stop
 
 <b>Info:</b>
 /status - Bot status + posities
@@ -674,6 +767,7 @@ COMMANDS = {
     '/config': lambda args: cmd_config(),
     '/test': lambda args: cmd_test(args),
     '/sell': lambda args: cmd_sell(args),
+    '/trailing': lambda args: cmd_trailing(args),
     '/info': lambda args: cmd_info(),
     '/help': lambda args: cmd_info(),
 }
