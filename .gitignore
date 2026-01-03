@@ -1,0 +1,74 @@
+# -------------------------
+# PYTHON ARTIFACTS
+# -------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# -------------------------
+# DISTRIBUTION / PACKAGE
+# -------------------------
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# -------------------------
+# VIRTUAL ENVIRONMENTS
+# -------------------------
+.venv/
+venv/
+ENV/
+env/
+
+# -------------------------
+# IDE & EDITOR FILES
+# -------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# -------------------------
+# CREDENTIALS & SECRETS
+# -------------------------
+input.env
+*.env
+.env
+
+# -------------------------
+# LOCAL DATA OUTPUTS
+# entire folders excluded, BUT structure kept via .gitkeep
+data/logs/
+data/trading/
+data/cache/
+data/stats/
+
+# Explicitly keep structure placeholders so Git keeps dirs
+!data/logs/.gitkeep
+!data/trading/.gitkeep
+!data/cache/.gitkeep
+!data/stats/.gitkeep
+
+# -------------------------
+# BACKUPS / TEMP
+# -------------------------
+*.bak
+*.tmp
+*.zip
+zip/

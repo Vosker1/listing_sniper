@@ -1,0 +1,44 @@
+# ============================================
+# LISTING SNIPER BOT CONFIGURATION
+# ============================================
+
+# Sniper Settings
+sniper:
+  budget_usdt: 100            # Max budget per snipe
+  poll_interval_sec: 5        # Poll instruments every 5 sec
+  max_launch_age_sec: 3600    # Only snipe if launched < 1 hour ago
+  poll_offset_ms: 100         # Start polling at XX:00.100
+
+# IOC Ladder Settings
+ladder:
+  steps: [0.0005, 0.001, 0.0015, 0.002, 0.0025, 0.003, 0.004, 0.005]  # 0.05% to 0.5%
+  repeat_per_step: 3          # Try each step 3x before moving up
+  order_interval_ms: 50       # 50ms between orders
+  max_orders: 100             # Max orders per snipe
+
+# Trailing Stop Settings
+trailing:
+  distance_pct: 4.0           # 4% trailing distance
+  activation_pct: 0.0         # Activate immediately (0 = at entry)
+
+# Fee Settings
+fees:
+  taker_pct: 0.055            # 0.055% taker fee
+
+# WebSocket Settings
+websocket:
+  ping_interval_s: 20
+  pong_timeout_s: 30
+  reconnect_delay_s: 1
+  max_reconnect_delay_s: 60
+
+# Logging
+logging:
+  level: INFO
+  console_enabled: true
+  file_enabled: true
+  output_dir: ./data/logs
+
+# Telegram (optional)
+telegram:
+  enabled: true
