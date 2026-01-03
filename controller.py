@@ -267,7 +267,7 @@ Net P&L: ${total_net:.2f}"""
             
             # Duration
             if created_time > 0:
-                duration_sec = (time.time() * 1000 - created_time) / 1000
+                duration_sec = time.time() - (created_time / 1000)
                 if duration_sec > 3600:
                     duration_str = f"{duration_sec/3600:.1f}h"
                 elif duration_sec > 60:
