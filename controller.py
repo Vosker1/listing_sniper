@@ -304,7 +304,13 @@ Net P&L: ${total_net:.2f}"""
             
             # Trailing status
             trailing_active = float(trailing_stop) > 0
-            trailing_str = f"✅ {trailing_stop}" if trailing_active else "❌"
+            if trailing_active and entry_price > 0:
+                trailing_pct = (float(trailing_stop) / entry_price) * 100
+                trailing_str = f"✅ {trailing_stop} ({trailing_pct:.2f}%)"
+            elif trailing_active:
+                trailing_str = f"✅ {trailing_stop}"
+            else:
+                trailing_str = "❌"
             
             # PnL emoji
             pnl_emoji = "🟢" if unrealized_pnl >= 0 else "🔴"
@@ -761,6 +767,66 @@ Trailing: {trailing_pct}% = ${float(trailing_value):.4f}"""
         return f"❌ Error: {e}"
 
 
+def cmd_prelisting(args: str) -> str:
+    """Check for upcoming pre-listings"""
+    if not _client:
+        return "❌ Client niet beschikbaar"
+    
+    try:
+        inst_resp = _client.get_instruments_info(category='linear')
+        if inst_resp.get('retCode') != 0:
+            return f"❌ Error: {inst_resp.get('retMsg')}"
+        
+        instruments = inst_resp.get('result', {}).get('list', [])
+        prelistings = [i for i in instruments if i.get('isPreListing') == True]
+        
+        if not prelistings:
+            return "📋 Geen pre-listings op dit moment"
+        
+        lines = [f"<b>🚀 Pre-listings: {len(prelistings)}</b>\n"]
+        
+        for p in prelistings:
+            symbol = p.get('symbol', '')
+            launch_time = int(p.get('launchTime', 0))
+            pre_info = p.get('preListingInfo', {})
+            
+            # Calculate time until launch
+            if launch_time > 0:
+                now_ms = int(time.time() * 1000)
+                diff_sec = (launch_time - now_ms) / 1000
+                
+                if diff_sec > 0:
+                    if diff_sec > 86400:
+                        time_str = f"in {diff_sec/86400:.1f}d"
+                    elif diff_sec > 3600:
+                        time_str = f"in {diff_sec/3600:.1f}h"
+                    elif diff_sec > 60:
+                        time_str = f"in {diff_sec/60:.0f}m"
+                    else:
+                        time_str = f"in {diff_sec:.0f}s"
+                else:
+                    time_str = "LIVE!"
+                
+                launch_date = datetime.fromtimestamp(launch_time / 1000)
+                launch_str = launch_date.strftime('%Y-%m-%d %H:%M')
+            else:
+                time_str = "TBD"
+                launch_str = "?"
+            
+            lines.append(f"<b>{symbol}</b>")
+            lines.append(f"   Launch: {launch_str} ({time_str})")
+            
+            if pre_info:
+                lines.append(f"   Info: {pre_info}")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
+        
+    except Exception as e:
+        return f"❌ Error: {e}"
+
+
 def cmd_info() -> str:
     return """<b>📋 Listing Sniper Controller</b>
 
@@ -779,6 +845,7 @@ def cmd_info() -> str:
 /balance - Wallet balance
 /logs - Laatste logs
 /config - Toon config
+/prelisting - Check upcoming listings
 
 /info - Deze lijst"""
 
@@ -794,6 +861,7 @@ COMMANDS = {
     '/test': lambda args: cmd_test(args),
     '/sell': lambda args: cmd_sell(args),
     '/trailing': lambda args: cmd_trailing(args),
+    '/prelisting': lambda args: cmd_prelisting(args),
     '/info': lambda args: cmd_info(),
     '/help': lambda args: cmd_info(),
 }
