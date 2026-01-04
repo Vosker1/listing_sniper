@@ -154,8 +154,8 @@ def cmd_start() -> str:
         with _process_lock:
             _trading_process = subprocess.Popen(
                 [sys.executable, "bot.py"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stdout=None,
+                stderr=None,
                 cwd=str(Path(__file__).parent)
             )
         _log(f"Bot started (PID: {_trading_process.pid})")
@@ -243,6 +243,13 @@ Net P&L: ${total_net:.2f}"""
             
             return "📊 Geen open posities en geen historische trades"
         
+        # Get instrument info for launch times
+        inst_resp = _client.get_instruments_info(category='linear')
+        instruments = {}
+        if inst_resp.get('retCode') == 0:
+            for i in inst_resp.get('result', {}).get('list', []):
+                instruments[i.get('symbol')] = i
+        
         # Show live positions
         lines = ["<b>📈 Live P&L</b>\n"]
         
@@ -257,7 +264,6 @@ Net P&L: ${total_net:.2f}"""
             unrealized_pnl = float(pos.get('unrealisedPnl', 0))
             position_value = float(pos.get('positionValue', 0))
             trailing_stop = pos.get('trailingStop', '0')
-            created_time = int(pos.get('createdTime', 0))
             
             # Calculate %
             if position_value > 0:
@@ -265,17 +271,36 @@ Net P&L: ${total_net:.2f}"""
             else:
                 pnl_pct = 0
             
-            # Duration
-            if created_time > 0:
-                duration_sec = time.time() - (created_time / 1000)
-                if duration_sec > 3600:
-                    duration_str = f"{duration_sec/3600:.1f}h"
-                elif duration_sec > 60:
-                    duration_str = f"{duration_sec/60:.0f}m"
-                else:
-                    duration_str = f"{duration_sec:.0f}s"
-            else:
-                duration_str = "?"
+            # Get token launch time from instruments
+            token_launch_str = "?"
+            if symbol in instruments:
+                launch_time = int(instruments[symbol].get('launchTime', 0))
+                if launch_time > 0:
+                    launch_date = datetime.fromtimestamp(launch_time / 1000)
+                    days_live = (datetime.now() - launch_date).days
+                    token_launch_str = f"{days_live}d (sinds {launch_date.strftime('%Y-%m-%d')})"
+            
+            # Get trade open time from executions
+            trade_open_str = "?"
+            exec_resp = _client.get_executions(symbol=symbol, limit=20)
+            if exec_resp.get('retCode') == 0:
+                executions = exec_resp.get('result', {}).get('list', [])
+                # Find earliest execution for current position (same side)
+                entry_side = 'Buy' if side == 'Buy' else 'Sell'
+                for ex in reversed(executions):
+                    if ex.get('side') == entry_side:
+                        exec_time = int(ex.get('execTime', 0))
+                        if exec_time > 0:
+                            trade_open_sec = time.time() - (exec_time / 1000)
+                            if trade_open_sec > 86400:
+                                trade_open_str = f"{trade_open_sec/86400:.1f}d"
+                            elif trade_open_sec > 3600:
+                                trade_open_str = f"{trade_open_sec/3600:.1f}h"
+                            elif trade_open_sec > 60:
+                                trade_open_str = f"{trade_open_sec/60:.0f}m"
+                            else:
+                                trade_open_str = f"{trade_open_sec:.0f}s"
+                            break
             
             # Trailing status
             trailing_active = float(trailing_stop) > 0
@@ -292,7 +317,8 @@ Net P&L: ${total_net:.2f}"""
    Current: ${mark_price:.6f}
    {pnl_emoji} P&L: ${unrealized_pnl:.2f} ({pnl_pct:+.2f}%)
    Trailing: {trailing_str}
-   Duration: {duration_str}
+   Token live: {token_launch_str}
+   Trade open: {trade_open_str}
 """)
         
         # Total

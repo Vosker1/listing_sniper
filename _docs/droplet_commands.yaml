@@ -6,9 +6,9 @@
 # git reset --hard origin/main
 # git pull
 
-# screen -S hedge_funding # nieuwe screen sessie
+# screen -S listing_sniper # nieuwe screen sessie
 # screen  Ctrl+A dan D om te detachen.
-# screen -r hedge_funding  # terug naar sessie
+# screen -r listing_sniper  # terug naar sessie
 
 
 # venv opstarten:
